@@ -1,12 +1,55 @@
+use crate::DBError;
+use crate::record::{Action, Record};
+use async_stream::try_stream;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use async_stream::try_stream;
 use tokio_stream::Stream;
-use crate::record::{Action, Record};
-use crate::DBError;
+
+const MAX_RECORD_SIZE: u32 = 100 * 1024 * 1024;
 
 pub struct Store {
     path: String,
+}
+
+pub struct RecordIter {
+    file: Option<File>,
+}
+
+impl Iterator for RecordIter {
+    type Item = Result<Record, DBError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let file = self.file.as_mut()?;
+
+        // Read total_len
+        let mut total_len_bytes = [0u8; 4];
+        match file.read_exact(&mut total_len_bytes) {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::UnexpectedEof => return None, // EOF
+            Err(e) => return Some(Err(e.into())),
+        }
+        let total_len = u32::from_le_bytes(total_len_bytes);
+
+        // Sanity check
+        if total_len > MAX_RECORD_SIZE {
+            return Some(Err(DBError::CorruptedFile(format!(
+                "record size {} exceeds max {}",
+                total_len, MAX_RECORD_SIZE
+            ))));
+        }
+
+        // Read record body
+        let mut buf = vec![0u8; total_len as usize];
+        match file.read_exact(&mut buf) {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                return Some(Err(DBError::CorruptedFile("truncated record".to_string())));
+            }
+            Err(e) => return Some(Err(e.into())),
+        }
+
+        Some(Record::decode(&buf))
+    }
 }
 
 impl Store {
@@ -24,6 +67,11 @@ impl Store {
         self.append_to_file(&record.encode());
     }
 
+    pub fn iter_from_file(&self) -> RecordIter {
+        let file = File::open(&self.path).ok();
+        RecordIter { file }
+    }
+
     fn append_to_file(&self, data: &[u8]) {
         let mut file = OpenOptions::new()
             .create(true)
@@ -33,44 +81,13 @@ impl Store {
         file.write_all(data).unwrap();
     }
 
+    // TODO: will be used for replication
+    #[allow(dead_code)]
     fn stream_from_file(&self) -> impl Stream<Item = Result<Record, DBError>> {
+        let iter = self.iter_from_file();
         try_stream! {
-            let mut file = match File::open(&self.path) {
-                Ok(f) => f,
-                Err(e) if e.kind() == ErrorKind::NotFound => return,
-                Err(e) => Err(e)?,
-            };
-
-            loop {
-                // Read total_len
-                let mut total_len_bytes = [0u8; 4];
-                match file.read_exact(&mut total_len_bytes) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => break, // EOF
-                    Err(e) => Err(e)?,
-                }
-                let total_len = u32::from_le_bytes(total_len_bytes);
-
-                // Sanity check: reject unreasonably large records (e.g., > 100MB)
-                const MAX_RECORD_SIZE: u32 = 100 * 1024 * 1024;
-                if total_len > MAX_RECORD_SIZE {
-                    Err(DBError::CorruptedFile(format!(
-                        "record size {} exceeds max {}",
-                        total_len, MAX_RECORD_SIZE
-                    )))?;
-                }
-
-                // Read record body
-                let mut buf = vec![0u8; total_len as usize];
-                match file.read_exact(&mut buf) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
-                        Err(DBError::CorruptedFile("truncated record".to_string()))?;
-                    }
-                    Err(e) => Err(e)?,
-                }
-
-                yield Record::decode(&buf)?
+            for record in iter {
+                yield record?
             }
         }
     }
