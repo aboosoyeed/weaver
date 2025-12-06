@@ -57,14 +57,16 @@ impl Store {
         Self { path }
     }
 
-    pub fn set(&self, key: Vec<u8>, value: Vec<u8>) {
+    pub fn set(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>{
         let record = Record::new(Action::Set, key, value);
-        self.append_to_file(&record.encode());
+        self.append_to_file(&record.encode())?;
+        Ok(())
     }
 
-    pub fn delete(&self, key: Vec<u8>) {
+    pub fn delete(&self, key: Vec<u8>) -> Result<(), DBError> {
         let record = Record::new(Action::Delete, key, Vec::new());
-        self.append_to_file(&record.encode());
+        self.append_to_file(&record.encode())?;
+        Ok(())
     }
 
     pub fn iter_from_file(&self) -> RecordIter {
@@ -72,13 +74,13 @@ impl Store {
         RecordIter { file }
     }
 
-    fn append_to_file(&self, data: &[u8]) {
+    fn append_to_file(&self, data: &[u8]) ->  Result<(), DBError>{
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)
-            .unwrap();
-        file.write_all(data).unwrap();
+            .open(&self.path)?;
+        file.write_all(data)?;
+        Ok(())
     }
 
     // TODO: will be used for replication

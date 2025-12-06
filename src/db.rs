@@ -35,7 +35,7 @@ impl DB {
         let encoded_key = serde::encode_to_vec(&key, config)?;
         let entry = Entry::new(value, ttl);
         let encoded_value = serde::encode_to_vec(&entry, config)?;
-        self.store.set(encoded_key.clone(), encoded_value.clone());
+        self.store.set(encoded_key.clone(), encoded_value.clone())?;
         self.data.insert(encoded_key, encoded_value);
         Ok(())
     }
@@ -43,7 +43,7 @@ impl DB {
     pub fn delete<K: Serialize>(&mut self, key: K) -> Result<(), DBError> {
         let config = config::standard();
         let encoded_key = serde::encode_to_vec(&key, config)?;
-        self.store.delete(encoded_key.clone());
+        self.store.delete(encoded_key.clone())?;
         self.data.remove(&encoded_key);
         Ok(())
     }
