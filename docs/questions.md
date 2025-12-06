@@ -1,0 +1,1 @@
+1. Should i close the file on DB Drop
