@@ -1,3 +1,4 @@
+use std::error::Error;
 use bincode::error::{DecodeError, EncodeError};
 use std::io;
 use thiserror::Error;
@@ -12,5 +13,9 @@ pub enum DBError {
     Io(#[from] io::Error),
     #[error("corrupted file: {0}")]
     CorruptedFile(String),
+    #[error("invalid path")]
+    InvalidPath,
+    #[error("{0}")]
+    Other(Box<dyn Error + Send + Sync>),
 }
 

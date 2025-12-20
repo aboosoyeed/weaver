@@ -5,24 +5,39 @@ use crate::store::Store;
 use ::serde::{Deserialize, Serialize};
 use bincode::{config, serde};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use crate::compaction::compact;
 
 pub struct DB {
     data: HashMap<Vec<u8>, Vec<u8>>,
-    store: Store,
+    pub store: Store,
 }
 
 impl DB {
-    pub fn new(path: &str) -> Result<Self, DBError> {
-        let store = Store::new(path.to_string());
+    fn new(path: &str) -> Result<Self, DBError> {
+        let mut store = Store::new(path)?;
         let mut data = HashMap::new();
-        for record in store.iter_from_file() {
-            let record = record?;
+        // Replay all segments + active WAL to rebuild state
+        for record in store.iter_all() {
+            let (record, _) = record?;
             match record.action {
                 Action::Set => data.insert(record.key, record.value),
                 Action::Delete => data.remove(&record.key),
             };
         }
+        // Set WAL size from filesystem (only track active WAL, not segments)
+        let wal_size = std::fs::metadata(store.wal_path())
+            .map(|m| m.len() as u32)
+            .unwrap_or(0);
+        store.set_wal_size(wal_size);
         Ok(Self { store, data })
+    }
+
+    pub async fn start(path: &str) -> Result<Arc<Mutex<Self>>, DBError>{
+        let db = Arc::new(Mutex::new(Self::new(path)?));
+        tokio::spawn(compact(db.clone(), Duration::from_secs(10)));
+        Ok(db)
     }
 
     pub fn set<K: Serialize, V: Serialize>(
@@ -61,5 +76,10 @@ impl DB {
             }
             None => Ok(None),
         }
+    }
+
+    pub fn run_compaction(&self) -> Result<(), DBError>{
+        self.store.write_all(&self.data)?;
+        Ok(())
     }
 }
