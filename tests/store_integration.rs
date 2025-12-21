@@ -1,13 +1,14 @@
+use std::fs::File;
 use std::io::Write;
 use std::thread;
 use std::time::Duration;
-use tempfile::NamedTempFile;
+use tempfile::tempdir;
 use weaver::{DB, DBError};
 
 #[test]
 fn roundtrip_set_get_delete_get() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap();
 
     let mut db = DB::new(path).unwrap();
 
@@ -28,8 +29,8 @@ fn roundtrip_set_get_delete_get() {
 
 #[test]
 fn recovery_after_reopen() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap();
 
     // Set some values and close
     {
@@ -52,8 +53,8 @@ fn recovery_after_reopen() {
 
 #[test]
 fn ttl_expiry() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap();
 
     let mut db = DB::new(path).unwrap();
 
@@ -74,15 +75,17 @@ fn ttl_expiry() {
 
 #[test]
 fn corrupted_file_handling() {
-    let mut temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path();
 
-    // Write garbage data
-    temp_file.write_all(b"not a valid record").unwrap();
-    temp_file.flush().unwrap();
+    // Write garbage data to the WAL file
+    let wal_path = path.join("wal.log");
+    let mut file = File::create(&wal_path).unwrap();
+    file.write_all(b"not a valid record").unwrap();
+    file.flush().unwrap();
 
     // Opening should fail with corruption error
-    let result = DB::new(&path);
+    let result = DB::new(path.to_str().unwrap());
     match result {
         Err(DBError::CorruptedFile(_)) => {} // expected
         Err(e) => panic!("expected CorruptedFile error, got {:?}", e),

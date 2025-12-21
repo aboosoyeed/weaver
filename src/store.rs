@@ -126,20 +126,46 @@ impl Store {
 
 
 
-    pub fn write_all(&self,data:&HashMap<Vec<u8>, Vec<u8>>) -> Result<(), DBError>{
+    /// Compact all live data into a new segment file
+    pub fn compact(&mut self, data: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), DBError> {
+        // Write to temp file
+        let tmp_path = self.path.join("compacted.tmp");
         let file = OpenOptions::new()
             .create(true)
-            .truncate(true) // truncate file if it already exists
-            .open(format!("{}.new", &self.path.display()))?;
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)?;
 
-        let mut writer = BufWriter::with_capacity(64 * 1024, file); // 64KB buffer
-        for (key, value) in data{
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
+        for (key, value) in data {
             let record = Record::new(Action::Set, key.clone(), value.clone());
             writer.write_all(&record.encode())?;
         }
         writer.flush()?;
         writer.get_ref().sync_all()?;
-        rename(format!("{}.new", &self.path.display()), &self.path)?;
+
+        // Atomic rename to segment file
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before Unix epoch")
+            .as_millis() as u64;
+        let segment_path = self.segment_path(ts);
+        rename(&tmp_path, &segment_path)?;
+
+        // Delete old segments (keep only the new one)
+        for old_segment in self.list_segments() {
+            if old_segment != segment_path {
+                std::fs::remove_file(old_segment)?;
+            }
+        }
+
+        // Delete WAL and reset size
+        let wal = self.wal_path();
+        if wal.exists() {
+            std::fs::remove_file(&wal)?;
+        }
+        self.active_wal_size = 0;
+
         Ok(())
     }
 

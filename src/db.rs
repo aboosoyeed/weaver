@@ -15,7 +15,7 @@ pub struct DB {
 }
 
 impl DB {
-    fn new(path: &str) -> Result<Self, DBError> {
+    pub fn new(path: &str) -> Result<Self, DBError> {
         let mut store = Store::new(path)?;
         let mut data = HashMap::new();
         // Replay all segments + active WAL to rebuild state
@@ -78,8 +78,8 @@ impl DB {
         }
     }
 
-    pub fn run_compaction(&self) -> Result<(), DBError>{
-        self.store.write_all(&self.data)?;
+    pub fn run_compaction(&mut self) -> Result<(), DBError> {
+        self.store.compact(&self.data)?;
         Ok(())
     }
 }
